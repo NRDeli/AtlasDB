@@ -1,30 +1,50 @@
 package com.atlasdb;
 
-import com.atlasdb.cluster.ClusterSimulator;
+import com.atlasdb.net.HttpClusterReplicator;
+import com.atlasdb.net.NodeServer;
 import com.atlasdb.replication.Role;
 
+import java.util.Arrays;
 import java.util.List;
 
 public class Main {
-    public static void main(String[] args) {
 
-        // Use separate WAL files per node
-        AtlasDBEngine leader = new AtlasDBEngine("atlasdb-leader.wal", Role.LEADER);
-        AtlasDBEngine follower1 = new AtlasDBEngine("atlasdb-f1.wal", Role.FOLLOWER);
-        AtlasDBEngine follower2 = new AtlasDBEngine("atlasdb-f2.wal", Role.FOLLOWER);
+    // Usage:
+    // Leader:   java -jar target/replicated-datastore-1.0-SNAPSHOT.jar leader 8080 leader.wal http://localhost:8081 http://localhost:8082
+    // Follower: java -jar target/replicated-datastore-1.0-SNAPSHOT.jar follower 8081 f1.wal
 
-        ClusterSimulator cluster = new ClusterSimulator(leader, List.of(follower1, follower2));
+    public static void main(String[] args) throws Exception {
+        if (args.length < 3) {
+            System.out.println("Usage:");
+            System.out.println(" leader <port> <walPath> <followerUrl...>");
+            System.out.println(" follower <port> <walPath>");
+            return;
+        }
 
-        System.out.println("Leader writing...");
-        leader.put("x", "100");
-        leader.put("y", "200");
-        leader.delete("x");
+        Role role = args[0].equalsIgnoreCase("leader") ? Role.LEADER : Role.FOLLOWER;
+        int port = Integer.parseInt(args[1]);
+        String walPath = args[2];
 
-        System.out.println("Replicating to followers...");
-        cluster.replicateOnce();
+        AtlasDBEngine engine = new AtlasDBEngine(walPath, role);
 
-        System.out.println("Follower1 y=" + follower1.get("y"));
-        System.out.println("Follower2 y=" + follower2.get("y"));
-        System.out.println("Follower1 x=" + follower1.get("x"));
+        NodeServer server = new NodeServer(engine, role, port);
+        server.start();
+        System.out.println("Node started on port " + port + " role=" + role);
+
+        if (role == Role.LEADER) {
+            List<String> followers = args.length > 3
+                    ? Arrays.asList(Arrays.copyOfRange(args, 3, args.length))
+                    : List.of();
+        
+            HttpClusterReplicator cluster = new HttpClusterReplicator(engine, followers);
+        
+            while (true) {
+                cluster.replicateOnce();
+                Thread.sleep(200);
+            }
+        } else {
+            // followers just serve requests
+            Thread.currentThread().join();
+        }
     }
 }

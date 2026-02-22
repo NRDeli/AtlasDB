@@ -6,7 +6,6 @@ import org.junit.jupiter.api.*;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -29,7 +28,9 @@ public class ReplicationIntegrationTest {
         AtlasDBEngine f1 = new AtlasDBEngine(p("f1.wal"), Role.FOLLOWER);
         AtlasDBEngine f2 = new AtlasDBEngine(p("f2.wal"), Role.FOLLOWER);
 
-        ClusterSimulator cluster = new ClusterSimulator(leader, List.of(f1, f2));
+        ClusterSimulator cluster = new ClusterSimulator(leader);
+        cluster.addFollower(f1);
+        cluster.addFollower(f2);
 
         leader.put("a", "1");
         leader.put("b", "2");
@@ -70,7 +71,8 @@ public class ReplicationIntegrationTest {
         // We'll force out-of-sync by manually advancing follower with a replication first,
         // then trying to re-send from 0.
 
-        ClusterSimulator cluster = new ClusterSimulator(leader, List.of(follower));
+        ClusterSimulator cluster = new ClusterSimulator(leader);
+        cluster.addFollower(follower);
         cluster.replicateOnce();
 
         // now follower lastAppliedIndex should be 1

@@ -1,8 +1,11 @@
 /Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/replication/Role.java
+/Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/net/HttpClusterReplicator.java
 /Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/KVStore.java
 /Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/cluster/ReplicationPacket.java
 /Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/cluster/ClusterSimulator.java
 /Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/log/WriteAheadLog.java
+/Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/net/NodeServer.java
+/Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/net/HttpReplicator.java
 /Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/log/Operation.java
 /Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/AtlasDBEngine.java
 /Users/nirmit/Documents/Projects/AtlasDB/src/main/java/com/atlasdb/Main.java

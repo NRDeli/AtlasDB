@@ -6,33 +6,30 @@ import com.atlasdb.log.Operation;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * In-process cluster simulation: one leader, N followers.
- * This lets you demonstrate replication + commit index without networking yet.
- */
 public class ClusterSimulator {
 
     private final AtlasDBEngine leader;
     private final List<AtlasDBEngine> followers = new ArrayList<>();
+    private int nextFromIndex = 0;
 
-    public ClusterSimulator(AtlasDBEngine leader, List<AtlasDBEngine> followers) {
+    public ClusterSimulator(AtlasDBEngine leader) {
         this.leader = leader;
-        this.followers.addAll(followers);
+    }
+
+    public void addFollower(AtlasDBEngine follower) {
+        followers.add(follower);
     }
 
     public void replicateOnce() {
-        int fromIndex = followers.isEmpty() ? 0 : followers.get(0).getLastAppliedIndex();
+        List<Operation> delta = leader.getReplicationDelta(nextFromIndex);
+        if (delta.isEmpty()) return;
 
-        List<Operation> delta = leaderReplicationDelta(fromIndex);
-        ReplicationPacket packet = new ReplicationPacket(fromIndex, delta);
+        ReplicationPacket packet = new ReplicationPacket(nextFromIndex, delta);
 
-        for (AtlasDBEngine follower : followers) {
-            follower.receiveReplication(packet);
+        for (AtlasDBEngine f : followers) {
+            f.receiveReplication(packet);
         }
-    }
 
-    private List<Operation> leaderReplicationDelta(int fromIndex) {
-        // We expose leader replication log via a helper method below (added in Engine)
-        return leader.getReplicationDelta(fromIndex);
+        nextFromIndex += delta.size();
     }
 }

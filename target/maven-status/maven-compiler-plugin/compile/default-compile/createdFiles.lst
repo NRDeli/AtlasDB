@@ -1,11 +1,14 @@
 com/atlasdb/replication/ReplicationManager.class
-com/atlasdb/replication/Role.class
-com/atlasdb/Main.class
+com/atlasdb/net/NodeServer.class
 com/atlasdb/log/WriteAheadLog.class
-com/atlasdb/log/Operation$Type.class
 com/atlasdb/cluster/ClusterSimulator.class
 com/atlasdb/AtlasDBEngine.class
 com/atlasdb/AtlasDBEngine$1.class
 com/atlasdb/cluster/ReplicationPacket.class
 com/atlasdb/KVStore.class
 com/atlasdb/log/Operation.class
+com/atlasdb/replication/Role.class
+com/atlasdb/Main.class
+com/atlasdb/log/Operation$Type.class
+com/atlasdb/net/HttpClusterReplicator.class
+com/atlasdb/net/HttpReplicator.class
