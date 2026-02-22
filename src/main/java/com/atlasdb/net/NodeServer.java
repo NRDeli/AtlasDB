@@ -65,7 +65,23 @@ public class NodeServer {
 
         // Writes only allowed on leader
         if (!engine.isLeader()) {
-            write(ex, 409, "not leader");
+            String leader = engine.getLeaderUrl();
+            if (leader == null) {
+                write(ex, 409, "no leader known");
+                return;
+            }
+        
+            // forward request
+            String methodF = method;
+            String url = leader + "/kv/" + key;
+        
+            try {
+                String body = methodF.equals("PUT") ? readBody(ex) : null;
+                String resp = HttpForwarder.forward(methodF, url, body);
+                write(ex, 200, resp);
+            } catch (Exception e) {
+                write(ex, 502, "forward failed");
+            }
             return;
         }
 

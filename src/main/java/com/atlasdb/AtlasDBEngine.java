@@ -18,6 +18,7 @@ public class AtlasDBEngine {
     private final WriteAheadLog wal;
     private final ReplicationManager replicationManager;
     private int lastAppliedIndex = 0;
+    private String leaderUrl;   // null if this node is leader
 
     public AtlasDBEngine(String walPath) {
         this(walPath, Role.LEADER);
@@ -27,6 +28,7 @@ public class AtlasDBEngine {
         this.store = new KVStore();
         this.wal = new WriteAheadLog(walPath);
         this.replicationManager = new ReplicationManager(role);
+        this.leaderUrl = leaderUrl;
         recover();
     }
 
@@ -37,11 +39,12 @@ public class AtlasDBEngine {
     public String get(String key) {
         return store.get(key);
     }
-
     public int getLastAppliedIndex() {
         return lastAppliedIndex;
     }
-
+    public String getLeaderUrl() {
+        return leaderUrl;
+    }
     public List<Operation> getReplicationDelta(int fromIndexInclusive) {
         if (!replicationManager.isLeader()) {
             throw new IllegalStateException("Only leader can serve replication delta");

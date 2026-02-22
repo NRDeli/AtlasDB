@@ -3,15 +3,14 @@ package com.atlasdb.log;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-/**
- * Line-based WAL: one operation per line.
- * Safer than ObjectOutputStream append.
- */
 public class WriteAheadLog {
 
+    private static final String HEADER = "ATLASDB_WAL_V1";
     private final Path path;
 
     public WriteAheadLog(String walPath) {
@@ -20,10 +19,7 @@ public class WriteAheadLog {
 
     public synchronized void append(Operation op) {
         try {
-            Files.createDirectories(path.toAbsolutePath().getParent() == null
-                    ? Paths.get(".")
-                    : path.toAbsolutePath().getParent());
-
+            ensureHeader();
             String line = op.toWalLine() + "\n";
             Files.write(path, line.getBytes(StandardCharsets.UTF_8),
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
@@ -33,26 +29,55 @@ public class WriteAheadLog {
     }
 
     public synchronized List<Operation> readAll() {
-        if (!Files.exists(path)) return List.of();
+        if (!Files.exists(path)) return Collections.emptyList();
 
         try {
             List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-            List<Operation> ops = new ArrayList<>();
-            for (String line : lines) {
-                Operation op = Operation.fromWalLine(line);
+            if (lines.isEmpty()) return Collections.emptyList();
+
+            // If file isn't in our format (ex: old ObjectOutputStream WAL), rotate it away.
+            if (!HEADER.equals(lines.get(0).trim())) {
+                rotateCorruptWal("unsupported-format");
+                return Collections.emptyList();
+            }
+
+            ArrayList<Operation> ops = new ArrayList<>();
+            for (int i = 1; i < lines.size(); i++) {
+                Operation op = Operation.fromWalLine(lines.get(i));
                 if (op != null) ops.add(op);
             }
             return ops;
         } catch (IOException e) {
-            throw new RuntimeException("WAL read failed", e);
+            // If it's unreadable (ex: binary garbage), rotate it away so the node can boot.
+            rotateCorruptWal("unreadable");
+            return Collections.emptyList();
         }
     }
 
-    public synchronized void clear() {
+    private void ensureHeader() throws IOException {
+        if (!Files.exists(path)) {
+            Files.createDirectories(path.toAbsolutePath().getParent() == null
+                    ? Paths.get(".")
+                    : path.toAbsolutePath().getParent());
+            Files.write(path, (HEADER + "\n").getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            return;
+        }
+        if (Files.size(path) == 0) {
+            Files.write(path, (HEADER + "\n").getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+        }
+    }
+
+    private void rotateCorruptWal(String reason) {
         try {
-            Files.deleteIfExists(path);
-        } catch (IOException e) {
-            throw new RuntimeException("WAL clear failed", e);
+            if (!Files.exists(path)) return;
+            String ts = String.valueOf(Instant.now().toEpochMilli());
+            Path moved = path.resolveSibling(path.getFileName() + ".corrupt." + reason + "." + ts);
+            Files.move(path, moved, StandardCopyOption.REPLACE_EXISTING);
+            // Next append/read will recreate with a proper header.
+        } catch (IOException ignored) {
+            // worst case: leave it; engine may fail later, but we tried.
         }
     }
 }
