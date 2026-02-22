@@ -39,6 +39,12 @@ public class ReplicationManager {
         return replicationLog;
     }
 
+    public List<Operation> getFromIndex(int indexInclusive) {
+        if (indexInclusive < 0) indexInclusive = 0;
+        if (indexInclusive >= replicationLog.size()) return List.of();
+        return new ArrayList<>(replicationLog.subList(indexInclusive, replicationLog.size()));
+    }
+
     public int size() {
         return replicationLog.size();
     }

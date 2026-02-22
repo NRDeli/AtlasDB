@@ -5,6 +5,8 @@ import com.atlasdb.log.WriteAheadLog;
 import com.atlasdb.replication.ReplicationManager;
 import com.atlasdb.replication.Role;
 
+import com.atlasdb.cluster.ReplicationPacket;
+
 import java.util.List;
 
 /**
@@ -15,11 +17,16 @@ public class AtlasDBEngine {
     private final KVStore store;
     private final WriteAheadLog wal;
     private final ReplicationManager replicationManager;
+    private int lastAppliedIndex = 0;
 
     public AtlasDBEngine(String walPath) {
+        this(walPath, Role.LEADER);
+    }
+
+    public AtlasDBEngine(String walPath, Role role) {
         this.store = new KVStore();
         this.wal = new WriteAheadLog(walPath);
-        this.replicationManager = new ReplicationManager(Role.LEADER);
+        this.replicationManager = new ReplicationManager(role);
         recover();
     }
 
@@ -27,11 +34,27 @@ public class AtlasDBEngine {
         return replicationManager.isLeader();
     }
 
+    public String get(String key) {
+        return store.get(key);
+    }
+
+    public int getLastAppliedIndex() {
+        return lastAppliedIndex;
+    }
+
+    public List<Operation> getReplicationDelta(int fromIndexInclusive) {
+        if (!replicationManager.isLeader()) {
+            throw new IllegalStateException("Only leader can serve replication delta");
+        }
+        return replicationManager.getFromIndex(fromIndexInclusive);
+    }
+
     public void put(String key, String value) {
         Operation op = Operation.put(key, value);
         wal.append(op);
         replicationManager.append(op);
         apply(op);
+        lastAppliedIndex++;
     }
 
     public void delete(String key) {
@@ -39,10 +62,7 @@ public class AtlasDBEngine {
         wal.append(op);
         replicationManager.append(op);
         apply(op);
-    }
-
-    public String get(String key) {
-        return store.get(key);
+        lastAppliedIndex++;
     }
 
     private void apply(Operation op) {
@@ -60,6 +80,28 @@ public class AtlasDBEngine {
         List<Operation> ops = wal.readAll();
         for (Operation op : ops) {
             apply(op);
+            lastAppliedIndex++;
+        }
+    }
+
+    public void receiveReplication(ReplicationPacket packet) {
+        // Followers only
+        if (replicationManager.isLeader()) {
+            throw new IllegalStateException("Leader should not receive replication packets");
+        }
+    
+        // Simple safety: only accept the next expected index
+        if (packet.getFromIndexInclusive() != lastAppliedIndex) {
+            throw new IllegalStateException(
+                    "Out of sync: expected fromIndex=" + lastAppliedIndex +
+                    " but got " + packet.getFromIndexInclusive()
+            );
+        }
+    
+        for (Operation op : packet.getOps()) {
+            wal.append(op);   // durable on follower
+            apply(op);        // apply to follower state machine
+            lastAppliedIndex++;
         }
     }
 }
