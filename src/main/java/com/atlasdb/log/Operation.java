@@ -29,6 +29,34 @@ public class Operation implements Serializable {
     public static Operation delete(String key) {
         return new Operation(Type.DELETE, key, null);
     }
+    
+    public static Operation fromWalLine(String line) {
+        if (line == null || line.isBlank()) return null;
+    
+        String[] parts = line.split("\t", -1);
+        if (parts.length < 2) return null;
+    
+        Type t = Type.valueOf(parts[0]);
+        String k = unescape(parts[1]);
+        String v = parts.length >= 3 ? unescape(parts[2]) : "";
+    
+        if (t == Type.PUT) return Operation.put(k, v);
+        if (t == Type.DELETE) return Operation.delete(k);
+        return null;
+    }
+    
+    private static String unescape(String s) {
+        if (s == null) return "";
+        return s.replace("\\t", "\t").replace("\\n", "\n");
+    }
+
+    public String toWalLine() {
+        // Format: TYPE \t key \t value
+        // value is empty for DELETE
+        String safeKey = key == null ? "" : key.replace("\t", "\\t").replace("\n", "\\n");
+        String safeVal = value == null ? "" : value.replace("\t", "\\t").replace("\n", "\\n");
+        return type.name() + "\t" + safeKey + "\t" + safeVal;
+    }
 
     public Type getType() {
         return type;

@@ -1,47 +1,58 @@
 package com.atlasdb.log;
 
-import java.io.*;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Durable write-ahead log for AtlasDB.
+ * Line-based WAL: one operation per line.
+ * Safer than ObjectOutputStream append.
  */
 public class WriteAheadLog {
 
-    private final File file;
+    private final Path path;
 
-    public WriteAheadLog(String path) {
-        this.file = new File(path);
+    public WriteAheadLog(String walPath) {
+        this.path = Paths.get(walPath);
     }
 
     public synchronized void append(Operation op) {
-        try (FileOutputStream fos = new FileOutputStream(file, true);
-             ObjectOutputStream oos = new ObjectOutputStream(fos)) {
+        try {
+            Files.createDirectories(path.toAbsolutePath().getParent() == null
+                    ? Paths.get(".")
+                    : path.toAbsolutePath().getParent());
 
-            oos.writeObject(op);
-
+            String line = op.toWalLine() + "\n";
+            Files.write(path, line.getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
         } catch (IOException e) {
             throw new RuntimeException("WAL append failed", e);
         }
     }
 
     public synchronized List<Operation> readAll() {
-        List<Operation> ops = new ArrayList<>();
-        if (!file.exists()) return ops;
+        if (!Files.exists(path)) return List.of();
 
-        try (FileInputStream fis = new FileInputStream(file);
-             ObjectInputStream ois = new ObjectInputStream(fis)) {
-
-            while (true) {
-                Operation op = (Operation) ois.readObject();
-                ops.add(op);
+        try {
+            List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+            List<Operation> ops = new ArrayList<>();
+            for (String line : lines) {
+                Operation op = Operation.fromWalLine(line);
+                if (op != null) ops.add(op);
             }
-
-        } catch (EOFException eof) {
             return ops;
-        } catch (Exception e) {
+        } catch (IOException e) {
             throw new RuntimeException("WAL read failed", e);
+        }
+    }
+
+    public synchronized void clear() {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException e) {
+            throw new RuntimeException("WAL clear failed", e);
         }
     }
 }
