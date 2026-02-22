@@ -20,14 +20,20 @@ public class AtlasDBEngine {
     private int lastAppliedIndex = 0;
     private String leaderUrl;   // null if this node is leader
 
-    public AtlasDBEngine(String walPath) {
-        this(walPath, Role.LEADER);
-    }
-
-    public AtlasDBEngine(String walPath, Role role) {
+    // Leader node
+    public AtlasDBEngine(String walPath, List<String> followers) {
         this.store = new KVStore();
         this.wal = new WriteAheadLog(walPath);
-        this.replicationManager = new ReplicationManager(role);
+        this.replicationManager = new ReplicationManager(Role.LEADER, followers);
+        this.leaderUrl = null;
+        recover();
+    }
+
+    // Follower node
+    public AtlasDBEngine(String walPath, String leaderUrl) {
+        this.store = new KVStore();
+        this.wal = new WriteAheadLog(walPath);
+        this.replicationManager = new ReplicationManager(Role.FOLLOWER);
         this.leaderUrl = leaderUrl;
         recover();
     }

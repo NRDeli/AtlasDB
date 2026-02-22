@@ -1,50 +1,60 @@
 package com.atlasdb;
 
-import com.atlasdb.net.HttpClusterReplicator;
 import com.atlasdb.net.NodeServer;
 import com.atlasdb.replication.Role;
 
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 
 public class Main {
 
-    // Usage:
-    // Leader:   java -jar target/replicated-datastore-1.0-SNAPSHOT.jar leader 8080 leader.wal http://localhost:8081 http://localhost:8082
-    // Follower: java -jar target/replicated-datastore-1.0-SNAPSHOT.jar follower 8081 f1.wal
-
     public static void main(String[] args) throws Exception {
         if (args.length < 3) {
-            System.out.println("Usage:");
-            System.out.println(" leader <port> <walPath> <followerUrl...>");
-            System.out.println(" follower <port> <walPath>");
+            System.out.println("""
+Usage:
+  leader   <port> <walPath> <followerUrl...>
+  follower <port> <walPath> <leaderUrl>
+Examples:
+  leader   8080 ./data/leader.wal http://localhost:8081 http://localhost:8082
+  follower 8081 ./data/f1.wal     http://localhost:8080
+""");
             return;
         }
 
-        Role role = args[0].equalsIgnoreCase("leader") ? Role.LEADER : Role.FOLLOWER;
+        String mode = args[0];
         int port = Integer.parseInt(args[1]);
-        String walPath = args[2];
+        String wal = args[2];
 
-        AtlasDBEngine engine = new AtlasDBEngine(walPath, role);
-
-        NodeServer server = new NodeServer(engine, role, port);
-        server.start();
-        System.out.println("Node started on port " + port + " role=" + role);
-
-        if (role == Role.LEADER) {
-            List<String> followers = args.length > 3
-                    ? Arrays.asList(Arrays.copyOfRange(args, 3, args.length))
-                    : List.of();
-        
-            HttpClusterReplicator cluster = new HttpClusterReplicator(engine, followers);
-        
-            while (true) {
-                cluster.replicateOnce();
-                Thread.sleep(200);
+        if (mode.equalsIgnoreCase("leader")) {
+            List<String> followers = new ArrayList<>();
+            for (int i = 3; i < args.length; i++) {
+                followers.add(args[i]);
             }
-        } else {
-            // followers just serve requests
-            Thread.currentThread().join();
+
+            AtlasDBEngine engine = new AtlasDBEngine(wal, List.copyOf(followers));
+            NodeServer server = new NodeServer(engine, Role.LEADER, port);
+
+            System.out.println("Leader started on port " + port + " followers=" + followers);
+            server.start();
+            return;
         }
+
+        if (mode.equalsIgnoreCase("follower")) {
+            if (args.length < 4) {
+                System.out.println("Follower requires leaderUrl: follower <port> <walPath> <leaderUrl>");
+                return;
+            }
+
+            String leaderUrl = args[3];
+
+            AtlasDBEngine engine = new AtlasDBEngine(wal, leaderUrl);
+            NodeServer server = new NodeServer(engine, Role.FOLLOWER, port);
+
+            System.out.println("Follower started on port " + port + " leader=" + leaderUrl);
+            server.start();
+            return;
+        }
+
+        System.out.println("Unknown mode: " + mode);
     }
 }

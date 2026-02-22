@@ -1,11 +1,12 @@
 package com.atlasdb;
 
 import com.atlasdb.cluster.ClusterSimulator;
-import com.atlasdb.replication.Role;
+import com.atlasdb.cluster.ReplicationPacket;
 import org.junit.jupiter.api.*;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,9 +25,11 @@ public class ReplicationIntegrationTest {
 
     @Test
     void leaderWritesReplicateToFollowers() {
-        AtlasDBEngine leader = new AtlasDBEngine(p("leader.wal"), Role.LEADER);
-        AtlasDBEngine f1 = new AtlasDBEngine(p("f1.wal"), Role.FOLLOWER);
-        AtlasDBEngine f2 = new AtlasDBEngine(p("f2.wal"), Role.FOLLOWER);
+        AtlasDBEngine leader = new AtlasDBEngine(p("leader.wal"), List.of());
+
+        // leaderUrl only matters for HTTP forwarding; tests replicate in-memory via ClusterSimulator
+        AtlasDBEngine f1 = new AtlasDBEngine(p("f1.wal"), "http://leader");
+        AtlasDBEngine f2 = new AtlasDBEngine(p("f2.wal"), "http://leader");
 
         ClusterSimulator cluster = new ClusterSimulator(leader);
         cluster.addFollower(f1);
@@ -49,13 +52,13 @@ public class ReplicationIntegrationTest {
     void crashRecoveryReplaysWal() {
         String wal = p("node.wal");
 
-        AtlasDBEngine node1 = new AtlasDBEngine(wal, Role.LEADER);
+        AtlasDBEngine node1 = new AtlasDBEngine(wal, List.of());
         node1.put("k1", "v1");
         node1.put("k2", "v2");
         node1.delete("k1");
 
         // "restart"
-        AtlasDBEngine node2 = new AtlasDBEngine(wal, Role.LEADER);
+        AtlasDBEngine node2 = new AtlasDBEngine(wal, List.of());
 
         assertNull(node2.get("k1"));
         assertEquals("v2", node2.get("k2"));
@@ -63,21 +66,18 @@ public class ReplicationIntegrationTest {
 
     @Test
     void followerRejectsOutOfSyncPacket() {
-        AtlasDBEngine leader = new AtlasDBEngine(p("leader2.wal"), Role.LEADER);
-        AtlasDBEngine follower = new AtlasDBEngine(p("follower2.wal"), Role.FOLLOWER);
+        AtlasDBEngine leader = new AtlasDBEngine(p("leader2.wal"), List.of());
+        AtlasDBEngine follower = new AtlasDBEngine(p("follower2.wal"), "http://leader");
 
         leader.put("x", "100");
-        // follower hasn't replicated yet, lastAppliedIndex=0, but leader will send fromIndex=0 via simulator.
-        // We'll force out-of-sync by manually advancing follower with a replication first,
-        // then trying to re-send from 0.
 
         ClusterSimulator cluster = new ClusterSimulator(leader);
         cluster.addFollower(follower);
         cluster.replicateOnce();
 
-        // now follower lastAppliedIndex should be 1
+        // now follower lastAppliedIndex should be 1, so re-sending fromIndex=0 should be rejected
         Exception ex = assertThrows(IllegalStateException.class, () -> follower.receiveReplication(
-                new com.atlasdb.cluster.ReplicationPacket(0, leader.getReplicationDelta(0))
+                new ReplicationPacket(0, leader.getReplicationDelta(0))
         ));
 
         assertTrue(ex.getMessage().contains("Out of sync"));

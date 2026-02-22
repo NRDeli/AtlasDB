@@ -5,122 +5,181 @@ import com.atlasdb.cluster.ReplicationPacket;
 import com.atlasdb.log.Operation;
 import com.atlasdb.replication.Role;
 
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpServer;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.InetSocketAddress;
+import java.io.*;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class NodeServer {
 
     private final AtlasDBEngine engine;
     private final Role role;
-    private final HttpServer server;
+    private final int port;
 
-    public NodeServer(AtlasDBEngine engine, Role role, int port) throws IOException {
+    private volatile boolean running = false;
+    private ServerSocket serverSocket;
+    private final ExecutorService pool = Executors.newCachedThreadPool();
+
+    public NodeServer(AtlasDBEngine engine, Role role, int port) {
         this.engine = engine;
         this.role = role;
-        this.server = HttpServer.create(new InetSocketAddress(port), 0);
-
-        server.createContext("/health", this::handleHealth);
-        server.createContext("/kv", this::handleKV);
-        server.createContext("/replicate", this::handleReplicate);
-
-        server.setExecutor(null); // default executor
+        this.port = port;
     }
 
-    public void start() {
-        server.start();
+    public void start() throws IOException {
+        serverSocket = new ServerSocket(port);
+        running = true;
+
+        Thread acceptThread = new Thread(() -> {
+            while (running) {
+                try {
+                    Socket client = serverSocket.accept();
+                    pool.submit(() -> handleClient(client));
+                } catch (IOException e) {
+                    if (running) e.printStackTrace();
+                }
+            }
+        }, "atlasdb-accept-" + port);
+
+        acceptThread.setDaemon(false);
+        acceptThread.start();
     }
 
-    private void handleHealth(HttpExchange ex) throws IOException {
-        write(ex, 200, "ok role=" + role.name());
+    public void stop() {
+        running = false;
+        try {
+            if (serverSocket != null) serverSocket.close();
+        } catch (IOException ignored) {}
+        pool.shutdownNow();
     }
 
-    private void handleKV(HttpExchange ex) throws IOException {
+    // ---------------- HTTP handling ----------------
+
+    private void handleClient(Socket client) {
+        try (client;
+             InputStream in = client.getInputStream();
+             OutputStream out = client.getOutputStream()) {
+
+            HttpRequest req = HttpRequest.parse(in);
+            if (req == null) {
+                write(out, 400, "bad request");
+                return;
+            }
+
+            route(req, out);
+
+        } catch (Exception e) {
+            // best effort
+            try {
+                OutputStream out = client.getOutputStream();
+                write(out, 500, "internal error");
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void route(HttpRequest req, OutputStream out) throws IOException {
+        String path = req.path;
+
+        if (path.equals("/health")) {
+            write(out, 200, "ok role=" + role.name());
+            return;
+        }
+
+        if (path.startsWith("/kv/")) {
+            handleKV(req, out);
+            return;
+        }
+
+        if (path.equals("/replicate")) {
+            handleReplicate(req, out);
+            return;
+        }
+
+        write(out, 404, "not found");
+    }
+
+    private void handleKV(HttpRequest req, OutputStream out) throws IOException {
         // Routes:
-        // GET  /kv/<key>
-        // PUT  /kv/<key>   body=value
-        // DEL  /kv/<key>
+        // GET    /kv/<key>
+        // PUT    /kv/<key>   body=value
+        // DELETE /kv/<key>
 
-        String path = ex.getRequestURI().getPath(); // /kv/x
-        String[] parts = path.split("/", -1);
+        String[] parts = req.path.split("/", -1); // ["", "kv", "<key>"]
         if (parts.length < 3 || parts[2].isBlank()) {
-            write(ex, 400, "missing key. use /kv/<key>");
+            write(out, 400, "missing key. use /kv/<key>");
             return;
         }
         String key = parts[2];
 
-        String method = ex.getRequestMethod().toUpperCase();
+        String method = req.method.toUpperCase();
 
         if (method.equals("GET")) {
             String val = engine.get(key);
-            if (val == null) write(ex, 404, "");
-            else write(ex, 200, val);
+            if (val == null) write(out, 404, "");
+            else write(out, 200, val);
             return;
         }
 
-        // Writes only allowed on leader
+        // Writes only allowed on leader (follower forwards)
         if (!engine.isLeader()) {
             String leader = engine.getLeaderUrl();
             if (leader == null) {
-                write(ex, 409, "no leader known");
+                write(out, 409, "no leader known");
                 return;
             }
-        
-            // forward request
-            String methodF = method;
+
             String url = leader + "/kv/" + key;
-        
             try {
-                String body = methodF.equals("PUT") ? readBody(ex) : null;
-                String resp = HttpForwarder.forward(methodF, url, body);
-                write(ex, 200, resp);
+                String body = method.equals("PUT") ? req.bodyUtf8() : null;
+                String resp = HttpForwarder.forward(method, url, body);
+                write(out, 200, resp);
             } catch (Exception e) {
-                write(ex, 502, "forward failed");
+                write(out, 502, "forward failed");
             }
             return;
         }
 
         if (method.equals("PUT")) {
-            String value = readBody(ex);
+            String value = req.bodyUtf8();
             engine.put(key, value);
-            write(ex, 200, "ok");
+            write(out, 200, "ok");
             return;
         }
 
         if (method.equals("DELETE")) {
             engine.delete(key);
-            write(ex, 200, "ok");
+            write(out, 200, "ok");
             return;
         }
 
-        write(ex, 405, "method not allowed");
+        write(out, 405, "method not allowed");
     }
 
-    private void handleReplicate(HttpExchange ex) throws IOException {
+    private void handleReplicate(HttpRequest req, OutputStream out) throws IOException {
         // Followers accept replication packets via POST body:
         // fromIndex\n
         // opLine\n
         // opLine\n
         // ...
-        if (!ex.getRequestMethod().equalsIgnoreCase("POST")) {
-            write(ex, 405, "POST required");
+
+        if (!req.method.equalsIgnoreCase("POST")) {
+            write(out, 405, "POST required");
             return;
         }
 
         if (engine.isLeader()) {
-            write(ex, 409, "leader does not accept replication");
+            write(out, 409, "leader does not accept replication");
             return;
         }
 
-        String body = readBody(ex);
+        String body = req.bodyUtf8();
         String[] lines = body.split("\n");
+
         if (lines.length < 1) {
-            write(ex, 400, "invalid replication payload");
+            write(out, 400, "invalid replication payload");
             return;
         }
 
@@ -128,11 +187,11 @@ public class NodeServer {
         try {
             fromIndex = Integer.parseInt(lines[0].trim());
         } catch (Exception e) {
-            write(ex, 400, "invalid fromIndex");
+            write(out, 400, "invalid fromIndex");
             return;
         }
 
-        java.util.ArrayList<Operation> ops = new java.util.ArrayList<>();
+        ArrayList<Operation> ops = new ArrayList<>();
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].trim();
             if (line.isBlank()) continue;
@@ -141,19 +200,119 @@ public class NodeServer {
         }
 
         engine.receiveReplication(new ReplicationPacket(fromIndex, List.copyOf(ops)));
-        write(ex, 200, "ok");
+        write(out, 200, "ok");
     }
 
-    private static String readBody(HttpExchange ex) throws IOException {
-        try (InputStream in = ex.getRequestBody()) {
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+    private static void write(OutputStream out, int code, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+
+        String status = switch (code) {
+            case 200 -> "OK";
+            case 400 -> "Bad Request";
+            case 404 -> "Not Found";
+            case 405 -> "Method Not Allowed";
+            case 409 -> "Conflict";
+            case 502 -> "Bad Gateway";
+            default -> "Internal Server Error";
+        };
+
+        String headers =
+                "HTTP/1.1 " + code + " " + status + "\r\n" +
+                "Content-Type: text/plain; charset=utf-8\r\n" +
+                "Content-Length: " + bytes.length + "\r\n" +
+                "Connection: close\r\n" +
+                "\r\n";
+
+        out.write(headers.getBytes(StandardCharsets.UTF_8));
+        out.write(bytes);
+        out.flush();
+    }
+
+    // ---------------- minimal HTTP request parser ----------------
+
+    private static final class HttpRequest {
+        final String method;
+        final String path;
+        final Map<String, String> headers;
+        final byte[] body;
+
+        private HttpRequest(String method, String path, Map<String, String> headers, byte[] body) {
+            this.method = method;
+            this.path = path;
+            this.headers = headers;
+            this.body = body;
         }
-    }
 
-    private static void write(HttpExchange ex, int code, String s) throws IOException {
-        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
-        ex.sendResponseHeaders(code, bytes.length);
-        ex.getResponseBody().write(bytes);
-        ex.close();
+        String bodyUtf8() {
+            return new String(body, StandardCharsets.UTF_8);
+        }
+
+        static HttpRequest parse(InputStream in) throws IOException {
+            // Read headers as ISO-8859-1 per HTTP spec (safe for ASCII header bytes)
+            BufferedInputStream bin = new BufferedInputStream(in);
+
+            String requestLine = readLine(bin);
+            if (requestLine == null || requestLine.isBlank()) return null;
+
+            String[] rl = requestLine.split(" ");
+            if (rl.length < 2) return null;
+
+            String method = rl[0].trim();
+            String fullPath = rl[1].trim();
+            String path = fullPath.split("\\?", 2)[0]; // ignore query
+
+            Map<String, String> headers = new HashMap<>();
+            String line;
+            while ((line = readLine(bin)) != null) {
+                if (line.isEmpty()) break; // end headers
+                int idx = line.indexOf(':');
+                if (idx <= 0) continue;
+                String k = line.substring(0, idx).trim().toLowerCase();
+                String v = line.substring(idx + 1).trim();
+                headers.put(k, v);
+            }
+
+            int contentLen = 0;
+            if (headers.containsKey("content-length")) {
+                try {
+                    contentLen = Integer.parseInt(headers.get("content-length"));
+                } catch (Exception ignored) {}
+            }
+
+            byte[] body = new byte[0];
+            if (contentLen > 0) {
+                body = bin.readNBytes(contentLen);
+            }
+
+            return new HttpRequest(method, path, headers, body);
+        }
+
+        private static String readLine(BufferedInputStream bin) throws IOException {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            int prev = -1;
+            while (true) {
+                int b = bin.read();
+                if (b == -1) break;
+
+                if (prev == '\r' && b == '\n') {
+                    // remove the previous '\r'
+                    byte[] arr = baos.toByteArray();
+                    int len = arr.length;
+                    if (len > 0 && arr[len - 1] == '\r') {
+                        return new String(arr, 0, len - 1, StandardCharsets.ISO_8859_1);
+                    }
+                    return new String(arr, StandardCharsets.ISO_8859_1);
+                }
+
+                baos.write(b);
+                prev = b;
+
+                // avoid pathological headers
+                if (baos.size() > 64 * 1024) throw new IOException("header line too long");
+            }
+
+            if (baos.size() == 0) return null;
+            return new String(baos.toByteArray(), StandardCharsets.ISO_8859_1);
+        }
     }
 }

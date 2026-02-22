@@ -1,5 +1,6 @@
 package com.atlasdb.replication;
 
+import com.atlasdb.net.HttpForwarder;
 import com.atlasdb.log.Operation;
 import java.util.ArrayList;
 import java.util.List;
@@ -8,9 +9,18 @@ public class ReplicationManager {
 
     private Role role;
     private final List<Operation> replicationLog = new ArrayList<>();
+    private final List<String> followers;
 
-    public ReplicationManager(Role initialRole) {
-        this.role = initialRole;
+    // Leader constructor
+    public ReplicationManager(Role role, List<String> followers) {
+        this.role = role;
+        this.followers = followers;
+    }
+
+    // Follower constructor
+    public ReplicationManager(Role role) {
+        this.role = role;
+        this.followers = List.of();
     }
 
     public boolean isLeader() {
@@ -32,7 +42,22 @@ public class ReplicationManager {
     /** Leader appends to replication log */
     public void append(Operation op) {
         if (!isLeader()) return;
+        if (role == Role.LEADER) {
+            replicateToFollowers(op);
+        }
         replicationLog.add(op);
+    }
+
+    private void replicateToFollowers(Operation op) {
+        for (String f : followers) {
+            try {
+                HttpForwarder.forward(
+                        "POST",
+                        f + "/replicate",
+                        op.toWalLine()
+                );
+            } catch (Exception ignored) {}
+        }
     }
 
     public List<Operation> getReplicationLog() {
