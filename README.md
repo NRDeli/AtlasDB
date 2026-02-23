@@ -5,7 +5,7 @@ It demonstrates core distributed systems concepts including leader–follower re
 
 ---
 
-# 🚀 Features
+# ⚙️ Features
 
 - Leader–Follower replication model
 - Write‑Ahead Log (WAL) durability
@@ -20,7 +20,7 @@ It demonstrates core distributed systems concepts including leader–follower re
 
 ---
 
-# 🏗 Architecture Overview
+# 🏯 Architecture Overview
 
 AtlasDB follows a replicated state machine architecture.
 
@@ -36,7 +36,7 @@ Each node consists of:
 
 ---
 
-# 📦 Components
+# 🧱 Components
 
 ## AtlasDBEngine
 Core state machine coordinating storage, WAL, and replication.
@@ -158,7 +158,7 @@ Recovery process:
 
 ---
 
-# ⚖ Consistency Model
+# 🦾 Consistency Model
 
 AtlasDB provides:
 
@@ -208,7 +208,7 @@ mvn clean test
 
 ---
 
-# 🖥 Running a Cluster
+# ▶️ Running a Cluster
 
 ## Build
 
@@ -246,7 +246,7 @@ curl localhost:8081/metrics
 
 ---
 
-# 📐 Distributed Systems Concepts Demonstrated
+# 📚 Distributed Systems Concepts Demonstrated
 
 - Replicated state machines
 - Leader‑based replication
@@ -259,7 +259,7 @@ curl localhost:8081/metrics
 
 ---
 
-# 🧱 Future Improvements
+# 🪛 Future Improvements
 
 - Real leader election (Raft/ZooKeeper)
 - Heartbeats + failure detection
