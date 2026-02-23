@@ -10,6 +10,7 @@ com/atlasdb/log/Operation.class
 com/atlasdb/replication/Role.class
 com/atlasdb/Main.class
 com/atlasdb/log/Operation$Type.class
+com/atlasdb/net/NodeServer$HttpRequest.class
 com/atlasdb/net/HttpClusterReplicator.class
 com/atlasdb/net/HttpForwarder.class
 com/atlasdb/net/HttpReplicator.class

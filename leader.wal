@@ -1,0 +1,9 @@
+ATLASDB_WAL_V1
+PUT|x|100
+PUT|x|100
+PUT|y|200
+DEL|x
+PUT|x|100
+PUT|a|1
+PUT|b|2
+DEL|a

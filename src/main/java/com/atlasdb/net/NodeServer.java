@@ -98,6 +98,11 @@ public class NodeServer {
             return;
         }
 
+        if (path.startsWith("/metrics")) {
+            handleMetrics(req, out);
+            return;
+        }
+
         write(out, 404, "not found");
     }
 
@@ -203,6 +208,15 @@ public class NodeServer {
         write(out, 200, "ok");
     }
 
+    private void handleMetrics(HttpRequest req, OutputStream out) throws IOException {
+        String body =
+                "role=" + role.name() + "\n" +
+                "lastApplied=" + engine.getLastAppliedIndex() + "\n" +
+                "commitIndex=" + engine.getCommitIndex() + "\n";
+
+        write(out, 200, body);
+    }
+
     private static void write(OutputStream out, int code, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
 
@@ -248,7 +262,6 @@ public class NodeServer {
         }
 
         static HttpRequest parse(InputStream in) throws IOException {
-            // Read headers as ISO-8859-1 per HTTP spec (safe for ASCII header bytes)
             BufferedInputStream bin = new BufferedInputStream(in);
 
             String requestLine = readLine(bin);
@@ -295,7 +308,6 @@ public class NodeServer {
                 if (b == -1) break;
 
                 if (prev == '\r' && b == '\n') {
-                    // remove the previous '\r'
                     byte[] arr = baos.toByteArray();
                     int len = arr.length;
                     if (len > 0 && arr[len - 1] == '\r') {
@@ -307,7 +319,6 @@ public class NodeServer {
                 baos.write(b);
                 prev = b;
 
-                // avoid pathological headers
                 if (baos.size() > 64 * 1024) throw new IOException("header line too long");
             }
 

@@ -18,6 +18,7 @@ public class AtlasDBEngine {
     private final WriteAheadLog wal;
     private final ReplicationManager replicationManager;
     private int lastAppliedIndex = 0;
+    private int commitIndex = 0;
     private String leaderUrl;   // null if this node is leader
 
     // Leader node
@@ -47,6 +48,12 @@ public class AtlasDBEngine {
     }
     public int getLastAppliedIndex() {
         return lastAppliedIndex;
+    }
+    public int getCommitIndex() {
+        return commitIndex;
+    }
+    public void advanceCommitIndex(int idx) {
+        this.commitIndex = Math.max(commitIndex, idx);
     }
     public String getLeaderUrl() {
         return leaderUrl;
@@ -83,6 +90,7 @@ public class AtlasDBEngine {
                 store.delete(op.getKey());
                 break;
         }
+        lastAppliedIndex++;
     }
 
     private void recover() {
@@ -110,7 +118,7 @@ public class AtlasDBEngine {
         for (Operation op : packet.getOps()) {
             wal.append(op);   // durable on follower
             apply(op);        // apply to follower state machine
-            lastAppliedIndex++;
         }
+        advanceCommitIndex(lastAppliedIndex);
     }
 }

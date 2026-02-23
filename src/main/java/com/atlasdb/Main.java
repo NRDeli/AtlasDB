@@ -11,13 +11,13 @@ public class Main {
     public static void main(String[] args) throws Exception {
         if (args.length < 3) {
             System.out.println("""
-Usage:
-  leader   <port> <walPath> <followerUrl...>
-  follower <port> <walPath> <leaderUrl>
-Examples:
-  leader   8080 ./data/leader.wal http://localhost:8081 http://localhost:8082
-  follower 8081 ./data/f1.wal     http://localhost:8080
-""");
+                Usage:
+                leader   <port> <walPath> <followerUrl...>
+                follower <port> <walPath> <leaderUrl>
+                Examples:
+                leader   8080 ./data/leader.wal http://localhost:8081 http://localhost:8082
+                follower 8081 ./data/f1.wal     http://localhost:8080
+            """);
             return;
         }
 
